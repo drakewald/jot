@@ -6,7 +6,7 @@ use std::{
 
 use crossterm::{
     cursor::MoveTo,
-    event::{KeyCode, KeyEvent},
+    event::{Event, KeyCode, KeyEvent, MouseEvent, MouseEventKind},
     execute,
     terminal::{Clear, ClearType},
 };
@@ -277,8 +277,79 @@ pub mod core {
         }
 
         /// Central event handler for the entire application.
-        pub fn handle_event(&mut self, event: KeyEvent) {
+        pub fn handle_event(&mut self, event: Event, term_width: u16) {
             self.status_message.clear();
+            match event {
+                Event::Key(key_event) => self.handle_key_event(key_event),
+                Event::Mouse(mouse_event) => self.handle_mouse_event(mouse_event, term_width),
+                _ => {}
+            }
+        }
+
+        fn handle_mouse_event(&mut self, event: MouseEvent, term_width: u16) {
+            let MouseEvent { kind, column, row, .. } = event;
+            let file_tree_width = (term_width as f32 * 0.25).round() as u16;
+
+            if let MouseEventKind::Down(_) = kind {
+                // 1. Check for File Tree Click
+                if column < file_tree_width {
+                    self.active_pane = ActivePane::FileTree;
+                    self.mode = Mode::FileTree;
+
+                    let target_index = row.saturating_sub(1) as usize; // row 0 is header
+                    if !self.directory_view.entries.is_empty() {
+                        let max_index = self.directory_view.entries.len().saturating_sub(1);
+                        self.directory_view.selected_index = target_index.min(max_index);
+                    }
+                    return;
+                }
+
+                let editor_start_col = file_tree_width + 1;
+
+                // 2. Check for Tab Bar Click
+                if row == 0 && column >= editor_start_col && !self.tabs.is_empty() {
+                    let mut current_col = editor_start_col;
+                    for (i, page) in self.tabs.iter().enumerate() {
+                        let file_name = page
+                            .file_path
+                            .as_ref()
+                            .and_then(|p| p.file_name())
+                            .and_then(|f| f.to_str())
+                            .unwrap_or("[No Name]");
+                        let tab_text = format!(" {} ", file_name);
+                        let tab_width = tab_text.len() as u16;
+
+                        if column >= current_col && column < current_col + tab_width {
+                            self.active_tab_index = i;
+                            break;
+                        }
+                        current_col += tab_width;
+                    }
+                    return;
+                }
+
+                // 3. Check for Editor Content Click
+                if row > 0 && column >= editor_start_col {
+                    if self.tabs.is_empty() {
+                        self.tabs.push(Page::new());
+                        self.active_tab_index = 0;
+                    }
+
+                    self.active_pane = ActivePane::Editor;
+                    self.mode = Mode::Edit;
+
+                    if let Some(page) = self.get_active_page() {
+                        let line_gutter_width = page.get_all_lines().len().to_string().len() + 2;
+                        let adjusted_row = row.saturating_sub(1) as usize;
+                        let adjusted_col =
+                            column.saturating_sub(editor_start_col + line_gutter_width as u16) as usize;
+                        page.move_cursor_to(adjusted_row, adjusted_col);
+                    }
+                }
+            }
+        }
+
+        fn handle_key_event(&mut self, event: KeyEvent) {
             match self.active_pane {
                 ActivePane::Editor => self.handle_editor_event(event),
                 ActivePane::FileTree => self.handle_file_tree_event(event.code),
@@ -287,7 +358,7 @@ pub mod core {
 
         fn handle_file_tree_event(&mut self, key_code: KeyCode) {
             match key_code {
-                KeyCode::Char('q') | KeyCode::Char('e') => self.should_quit = true,
+                KeyCode::Char('x') => self.should_quit = true,
                 KeyCode::Up | KeyCode::Char('k') => self.directory_view.move_up(),
                 KeyCode::Down | KeyCode::Char('j') => self.directory_view.move_down(),
                 KeyCode::Left | KeyCode::Char('h') => self.go_up_directory(),
@@ -524,7 +595,7 @@ pub mod core {
                         self.active_tab_index = self.tabs.len() - 1;
                     }
                 }
-                "e" | "exit" => {
+                "x" | "exit" => {
                     self.should_quit = true;
                 }
                 "wx" => {
@@ -547,7 +618,7 @@ pub mod core {
                 }
                 "h" | "help" => {
                     self.status_message =
-                        "Help | Modes: Esc (Cmd/Edit), Tab (Dir View) | Cmds: n, q, w, wq, e, wx, r | Tabs(Cmd): ← →"
+                        "Help | Modes: Esc (Cmd/Edit), Tab (Dir View) | Cmds: n, q, w, wq, x, wx, r | Tabs(Cmd): ← →"
                             .to_string();
                 }
                 "r" | "revert" => self.revert_active_file(),
