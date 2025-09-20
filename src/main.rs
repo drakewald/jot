@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
+    event::{self, DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{
         disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -21,8 +21,8 @@ fn main() -> io::Result<()> {
         ui::draw_ui(&mut stdout, &app)?;
 
         let event = event::read()?;
-        let (width, _) = crossterm::terminal::size()?;
-        app.handle_event(event, width);
+        let (width, height) = crossterm::terminal::size()?;
+        app.handle_event(event, width, height);
 
         if app.should_quit {
             break;
